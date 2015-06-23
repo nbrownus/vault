@@ -8,6 +8,8 @@ import (
 	"github.com/hashicorp/vault/audit"
 	"github.com/hashicorp/vault/logical"
 	"github.com/mitchellh/copystructure"
+	"net/http"
+	"strings"
 )
 
 func Factory(conf map[string]string) (audit.Backend, error) {
@@ -33,6 +35,16 @@ func Factory(conf map[string]string) (audit.Backend, error) {
 		logRaw = b
 	}
 
+	// Check if http logging is enabled
+	logHTTP := false
+	if raw, ok := conf["log_http"]; ok {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, err
+		}
+		logHTTP = b
+	}
+
 	// Get the logger
 	logger, err := gsyslog.NewLogger(gsyslog.LOG_INFO, facility, tag)
 	if err != nil {
@@ -41,7 +53,8 @@ func Factory(conf map[string]string) (audit.Backend, error) {
 
 	b := &Backend{
 		logger: logger,
-		logRaw: logRaw,
+		LogRaw: logRaw,
+		LogHTTP: logHTTP,
 	}
 	return b, nil
 }
@@ -49,11 +62,15 @@ func Factory(conf map[string]string) (audit.Backend, error) {
 // Backend is the audit backend for the syslog-based audit store.
 type Backend struct {
 	logger gsyslog.Syslogger
-	logRaw bool
+	LogRaw bool
+	LogHTTP bool
 }
 
 func (b *Backend) LogRequest(auth *logical.Auth, req *logical.Request) error {
-	if !b.logRaw {
+	if b.LogHTTP {
+		return nil
+	}
+	if !b.LogRaw {
 		// Copy the structures
 		cp, err := copystructure.Copy(auth)
 		if err != nil {
@@ -90,7 +107,10 @@ func (b *Backend) LogRequest(auth *logical.Auth, req *logical.Request) error {
 
 func (b *Backend) LogResponse(auth *logical.Auth, req *logical.Request,
 	resp *logical.Response, err error) error {
-	if !b.logRaw {
+	if b.LogHTTP {
+		return nil
+	}
+	if !b.LogRaw {
 		// Copy the structure
 		cp, err := copystructure.Copy(auth)
 		if err != nil {
@@ -132,4 +152,47 @@ func (b *Backend) LogResponse(auth *logical.Auth, req *logical.Request,
 	// Write otu to syslog
 	_, err = b.logger.Write(buf.Bytes())
 	return err
+}
+
+func (b *Backend) LogHTTPRequest(req *http.Request, resp *logical.TeeResponseWriter) error {
+	if !b.LogHTTP {
+		return nil
+	}
+
+	// Prime resp.RawHeader
+	resp.Header()
+
+	req.Header = sanitizeHeader(req.Header)
+	resp.RawHeader = sanitizeHeader(resp.RawHeader)
+
+	if !b.LogRaw {
+		if err := audit.Hash(req); err != nil {
+			return err
+		}
+
+		if err := audit.Hash(resp); err != nil {
+			return err
+		}
+	}
+
+	// Encode the entry as JSON
+	var buf bytes.Buffer
+	var format audit.FormatJSON
+	err := format.FormatHTTPRequest(&buf, *req, *resp);
+	if err != nil {
+		return err
+	}
+
+	// Write otu to syslog
+	_, err = b.logger.Write(buf.Bytes())
+	return err
+}
+
+func sanitizeHeader(h http.Header) http.Header {
+	newHeader := make(http.Header)
+	for name, values := range h {
+		newName := strings.ToLower(name)
+		newHeader[newName] = append(newHeader[newName], strings.Join(values, "; "))
+	}
+	return newHeader
 }

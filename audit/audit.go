@@ -1,6 +1,9 @@
 package audit
 
-import "github.com/hashicorp/vault/logical"
+import (
+	"github.com/hashicorp/vault/logical"
+	"net/http"
+)
 
 // Backend interface must be implemented for an audit
 // mechanism to be made available. Audit backends can be enabled to
@@ -18,6 +21,8 @@ type Backend interface {
 	// MUST not be modified in anyway. They should be deep copied if this is
 	// a possibility.
 	LogResponse(*logical.Auth, *logical.Request, *logical.Response, error) error
+
+	LogHTTPRequest(*http.Request, *logical.TeeResponseWriter) error
 }
 
 // Factory is the factory function to create an audit backend.

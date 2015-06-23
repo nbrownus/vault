@@ -18,6 +18,8 @@ import (
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/physical"
 	"github.com/hashicorp/vault/shamir"
+
+	gohttp "net/http"
 )
 
 const (
@@ -137,6 +139,8 @@ func (e *ErrInvalidKey) Error() string {
 type Core struct {
 	// HABackend may be available depending on the physical backend
 	ha physical.HABackend
+
+	handler gohttp.Handler
 
 	// AdvertiseAddr is the address we advertise as leader if held
 	advertiseAddr string
@@ -341,6 +345,20 @@ func (c *Core) Shutdown() error {
 
 	// Seal the Vault, causes a leader stepdown
 	return c.sealInternal()
+}
+
+func (c *Core) WrapHTTPHandler(handler gohttp.Handler) gohttp.Handler {
+	c.handler = handler
+	return c
+}
+
+func (c *Core) ServeHTTP(w gohttp.ResponseWriter, r *gohttp.Request) {
+	//TODO: This is unfortunate but it works
+	if c.auditBroker != nil {
+		c.auditBroker.ServeHTTP(c.handler, w, r)
+	} else {
+		c.handler.ServeHTTP(w, r)
+	}
 }
 
 // HandleRequest is used to handle a new incoming request

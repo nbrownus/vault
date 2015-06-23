@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
 	"github.com/hashicorp/vault/physical"
+	"net/http"
 )
 
 // This file contains a number of methods that are useful for unit
@@ -91,6 +92,10 @@ func (n *noopAudit) LogRequest(a *logical.Auth, r *logical.Request) error {
 }
 
 func (n *noopAudit) LogResponse(a *logical.Auth, r *logical.Request, re *logical.Response, err error) error {
+	return nil
+}
+
+func (b *noopAudit) LogHTTPRequest(req *http.Request, res *logical.TeeResponseWriter) error {
 	return nil
 }
 

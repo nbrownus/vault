@@ -12,6 +12,8 @@ import (
 	"github.com/armon/go-metrics"
 	"github.com/hashicorp/vault/audit"
 	"github.com/hashicorp/vault/logical"
+	"net/http"
+	"bytes"
 )
 
 const (
@@ -308,4 +310,36 @@ func (a *AuditBroker) LogResponse(auth *logical.Auth, req *logical.Request,
 		return fmt.Errorf("no audit backend succeeded in logging the response")
 	}
 	return nil
+}
+
+func (a *AuditBroker) ServeHTTP(h http.Handler, w http.ResponseWriter, r *http.Request) {
+	reqStart := time.Now()
+
+	tee := logical.NewTeeResponseWriter(w)
+	body := &logical.TeeReadCloser{r.Body, bytes.Buffer{}}
+	r.Body = body
+
+	h.ServeHTTP(tee, r)
+	tee.Duration = time.Since(reqStart)
+
+	defer metrics.MeasureSince([]string{"audit", "log_http_request"}, time.Now())
+	a.l.RLock()
+	defer a.l.RUnlock()
+
+	// Ensure at least one backend logs
+	anyLogged := false
+	for name, be := range a.backends {
+		start := time.Now()
+		err := be.backend.LogHTTPRequest(r, tee)
+
+		metrics.MeasureSince([]string{"audit", name, "log_http_request`"}, start)
+		if err != nil {
+			a.logger.Printf("[ERR] audit: backend '%s' failed to log http request: %v", name, err)
+		} else {
+			anyLogged = true
+		}
+	}
+	if !anyLogged && len(a.backends) > 0 {
+		a.logger.Print("no audit backend succeeded in logging the http request")
+	}
 }

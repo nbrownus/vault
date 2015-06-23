@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/vault/audit"
 	"github.com/hashicorp/vault/logical"
+	"net/http"
 )
 
 type NoopAudit struct {
@@ -22,6 +23,9 @@ type NoopAudit struct {
 	RespReq  []*logical.Request
 	Resp     []*logical.Response
 	RespErrs []error
+
+	HTTPResp []*logical.TeeResponseWriter
+	HTTPReq  []*http.Request
 }
 
 func (n *NoopAudit) LogRequest(a *logical.Auth, r *logical.Request) error {
@@ -35,6 +39,12 @@ func (n *NoopAudit) LogResponse(a *logical.Auth, r *logical.Request, re *logical
 	n.RespReq = append(n.RespReq, r)
 	n.Resp = append(n.Resp, re)
 	n.RespErrs = append(n.RespErrs, err)
+	return n.RespErr
+}
+
+func (n *NoopAudit) LogHTTPRequest(r *http.Request, re *logical.TeeResponseWriter) error {
+	n.HTTPReq = append(n.HTTPReq, r)
+	n.HTTPResp = append(n.HTTPResp, re)
 	return n.RespErr
 }
 

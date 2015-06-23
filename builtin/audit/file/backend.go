@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/vault/audit"
 	"github.com/hashicorp/vault/logical"
 	"github.com/mitchellh/copystructure"
+	"net/http"
+	"strings"
 )
 
 func Factory(conf map[string]string) (audit.Backend, error) {
@@ -28,9 +30,20 @@ func Factory(conf map[string]string) (audit.Backend, error) {
 		logRaw = b
 	}
 
+	// Check if http logging is enabled
+	logHTTP := false
+	if raw, ok := conf["log_http"]; ok {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, err
+		}
+		logHTTP = b
+	}
+
 	b := &Backend{
-		Path:   path,
-		LogRaw: logRaw,
+		Path:    path,
+		LogRaw:  logRaw,
+		LogHTTP: logHTTP,
 	}
 	return b, nil
 }
@@ -41,14 +54,18 @@ func Factory(conf map[string]string) (audit.Backend, error) {
 // It doesn't do anything more at the moment to assist with rotation
 // or reset the write cursor, this should be done in the future.
 type Backend struct {
-	Path   string
-	LogRaw bool
+	Path    string
+	LogRaw  bool
+	LogHTTP bool
 
 	once sync.Once
 	f    *os.File
 }
 
 func (b *Backend) LogRequest(auth *logical.Auth, req *logical.Request) error {
+	if b.LogHTTP {
+		return nil
+	}
 	if err := b.open(); err != nil {
 		return err
 	}
@@ -84,6 +101,9 @@ func (b *Backend) LogResponse(
 	req *logical.Request,
 	resp *logical.Response,
 	err error) error {
+	if b.LogHTTP {
+		return nil
+	}
 	if err := b.open(); err != nil {
 		return err
 	}
@@ -123,6 +143,35 @@ func (b *Backend) LogResponse(
 	return format.FormatResponse(b.f, auth, req, resp, err)
 }
 
+func (b *Backend) LogHTTPRequest(req *http.Request, resp *logical.TeeResponseWriter) error {
+	if err := b.open(); err != nil {
+		return err
+	}
+
+	if !b.LogHTTP {
+		return nil
+	}
+
+	// Prime resp.RawHeader
+	resp.Header()
+
+	req.Header = sanitizeHeader(req.Header)
+	resp.RawHeader = sanitizeHeader(resp.RawHeader)
+
+	if !b.LogRaw {
+		if err := audit.Hash(req); err != nil {
+			return err
+		}
+
+		if err := audit.Hash(resp); err != nil {
+			return err
+		}
+	}
+
+	var format audit.FormatJSON
+	return format.FormatHTTPRequest(b.f, *req, *resp)
+}
+
 func (b *Backend) open() error {
 	if b.f != nil {
 		return nil
@@ -138,4 +187,13 @@ func (b *Backend) open() error {
 	}
 
 	return nil
+}
+
+func sanitizeHeader(h http.Header) http.Header {
+	newHeader := make(http.Header)
+	for name, values := range h {
+		newName := strings.ToLower(name)
+		newHeader[newName] = append(newHeader[newName], strings.Join(values, "; "))
+	}
+	return newHeader
 }

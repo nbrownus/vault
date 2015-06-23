@@ -5,6 +5,11 @@ import (
 	"io"
 
 	"github.com/hashicorp/vault/logical"
+	"time"
+	"net/http"
+	"fmt"
+	"strings"
+	"net"
 )
 
 // FormatJSON is a Formatter implementation that structuteres data into
@@ -94,6 +99,65 @@ func (f *FormatJSON) FormatResponse(
 	})
 }
 
+func (f *FormatJSON) FormatHTTPRequest(w io.Writer, req http.Request, res logical.TeeResponseWriter) error {
+	enc := json.NewEncoder(w)
+	return enc.Encode(&JSONHTTPEntry{
+		Type: "http",
+
+		Duration: res.Duration / time.Millisecond,
+
+		HTTP: JSONHTTP{
+			Request: JSONHTTPRequest{
+				Body:          req.Body.(*logical.TeeReadCloser).Bytes.String(),
+				Header:        f.formatHTTPHeader(req.Header),
+				Method:        req.Method,
+				Path:          req.URL.RequestURI(),
+				RemoteAddress: getHost(req.RemoteAddr),
+			},
+
+			Response: JSONHTTPResponse{
+				Body:       res.Body.String(),
+				Header:     f.formatHTTPHeader(res.Header()),
+				StatusCode: res.StatusCode,
+				StatusText: http.StatusText(res.StatusCode),
+			},
+
+			Version: fmt.Sprintf("%d.%d", req.ProtoMajor, req.ProtoMinor),
+		},
+
+		Message: fmt.Sprintf(
+			"%s %s %s\n%s %d %s",
+			req.Method,
+			req.URL.RequestURI(),
+			req.Proto,
+			req.Proto,
+			res.StatusCode,
+			http.StatusText(res.StatusCode),
+		),
+	})
+}
+
+func (f *FormatJSON) formatHTTPHeader(h http.Header) map[string]string {
+	header := make(map[string]string)
+
+	for name, values := range h {
+		header[strings.ToLower(name)] = strings.Join(values, "; ")
+	}
+
+	return header
+}
+
+func getHost(hostport string) (host string) {
+	var remoteAddr string
+
+	remoteAddr, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		remoteAddr = ""
+	}
+
+	return remoteAddr
+}
+
 // JSONRequest is the structure of a request audit log entry in JSON.
 type JSONRequestEntry struct {
 	Type    string      `json:"type"`
@@ -132,4 +196,32 @@ type JSONAuth struct {
 
 type JSONSecret struct {
 	LeaseID string `json:"lease_id"`
+}
+
+type JSONHTTPEntry struct {
+	Duration  time.Duration `json:"duration"`
+	HTTP      JSONHTTP      `json:"http"`
+	Message   string        `json:"message"`
+	Type      string        `json:"type"`
+}
+
+type JSONHTTP struct {
+	Request  JSONHTTPRequest  `json:"request"`
+	Response JSONHTTPResponse `json:"response"`
+	Version  string           `json:"version"`
+}
+
+type JSONHTTPRequest struct {
+	Body          string            `json:"body"`
+	Header        map[string]string `json:"headers"`
+	Method        string            `json:"method"`
+	Path          string            `json:"url"`
+	RemoteAddress string            `json:"remote_address"`
+}
+
+type JSONHTTPResponse struct {
+	Body       string            `json:"body"`
+	Header     map[string]string `json:"headers"`
+	StatusText string            `json:"reason"`
+	StatusCode int               `json:"status"`
 }

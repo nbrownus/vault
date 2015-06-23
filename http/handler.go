@@ -47,7 +47,8 @@ func Handler(core *vault.Core) http.Handler {
 	mux.Handle("/v1/", handleLogical(core))
 
 	// Wrap the handler in another handler to trigger all help paths.
-	handler := handleHelpHandler(mux, core)
+	accessLogger := core.WrapHTTPHandler(mux)
+	handler := handleHelpHandler(accessLogger, core)
 
 	return handler
 }

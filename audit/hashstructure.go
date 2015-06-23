@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/vault/logical"
 	"github.com/mitchellh/copystructure"
 	"github.com/mitchellh/reflectwalk"
+	"net/http"
+	"bytes"
 )
 
 // Hash will hash the given type. This has built-in support for auth,
@@ -65,6 +67,60 @@ func Hash(raw interface{}) error {
 		}
 
 		s.Data = data.(map[string]interface{})
+	case *http.Request:
+		if s == nil {
+			return nil
+		}
+
+		if s.Body != nil {
+			body, err := fn(s.Body.(*logical.TeeReadCloser).Bytes.String())
+			if err != nil {
+				return err
+			}
+			s.Body.(*logical.TeeReadCloser).Bytes = *bytes.NewBufferString(body)
+		}
+
+		if s.Header != nil {
+			if err := Hash(s.Header); err != nil {
+				return err
+			}
+		}
+	case *logical.TeeResponseWriter:
+		if s == nil {
+			return nil
+		}
+
+		if s.RawHeader != nil {
+			if err := Hash(s.RawHeader); err != nil {
+				return err
+			}
+		}
+
+		body, err := fn(s.Body.String())
+		if err != nil {
+			return err
+		}
+		s.Body = *bytes.NewBufferString(body)
+	case http.Header:
+		if s == nil {
+			return nil
+		}
+
+		if s["x-vault-token"] != nil {
+			token, err := HashStructure(s["x-vault-token"], fn)
+			if err != nil {
+				return err
+			}
+			s["x-vault-token"] = token.([]string)
+		}
+
+		if s["cookie"] != nil {
+			cookie, err := HashStructure(s["cookie"], fn)
+			if err != nil {
+				return err
+			}
+			s["cookie"] = cookie.([]string)
+		}
 	}
 
 	return nil
